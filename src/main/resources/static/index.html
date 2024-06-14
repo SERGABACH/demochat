@@ -6,6 +6,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <script>
         var stompClient = null;
+        var currentUser = null;
+        var selectedUser = null;
 
         function connect() {
             var socket = new SockJS('/ws');
@@ -15,18 +17,33 @@
                 stompClient.subscribe('/topic/public', function (message) {
                     showMessage(JSON.parse(message.body));
                 });
+                loadMessages();
+                loadUsers();
             });
         }
 
         function sendMessage() {
             var messageContent = document.getElementById('message').value;
-            var sender = document.getElementById('sender').value;
-            if (messageContent && stompClient) {
+            var recipient = selectedUser ? selectedUser.username : null;
+            if (messageContent && stompClient && currentUser) {
                 var chatMessage = {
-                    sender: sender,
+                    sender: {username: currentUser.username},
+                    recipient: recipient ? {username: recipient} : null,
                     content: messageContent
                 };
                 stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(chatMessage));
+                document.getElementById('message').value = '';
+            }
+        }
+
+        function sendPublicMessage() {
+            var messageContent = document.getElementById('message').value;
+            if (messageContent && stompClient && currentUser) {
+                var chatMessage = {
+                    sender: {username: currentUser.username},
+                    content: messageContent
+                };
+                stompClient.send("/app/chat.sendPublicMessage", {}, JSON.stringify(chatMessage));
                 document.getElementById('message').value = '';
             }
         }
@@ -35,19 +52,131 @@
             var response = document.getElementById('response');
             var p = document.createElement('p');
             p.style.wordWrap = 'break-word';
-            p.appendChild(document.createTextNode(message.sender + ": " + message.content));
+            p.appendChild(document.createTextNode((message.sender.username || 'Public') + ": " + message.content));
             response.appendChild(p);
         }
 
-        window.onload = connect;
+        function loadMessages() {
+            fetch('/api/messages?recipientUsername=' + (selectedUser ? selectedUser.username : ''))
+                .then(response => response.json())
+                .then(messages => {
+                    var response = document.getElementById('response');
+                    response.innerHTML = ''; // Clear current messages
+                    messages.forEach(showMessage);
+                });
+        }
+
+        function loadUsers() {
+            fetch('/api/users')
+                .then(response => response.json())
+                .then(users => {
+                    var usersList = document.getElementById('users');
+                    usersList.innerHTML = ''; // Clear current users list
+                    users.forEach(user => {
+                        if (user.username !== currentUser.username) { // Exclude current user
+                            var li = document.createElement('li');
+                            li.appendChild(document.createTextNode(user.username));
+                            li.onclick = function() {
+                                selectedUser = user;
+                                document.getElementById('chatWith').innerText = 'Chat with: ' + user.username;
+                                loadMessages();
+                            };
+                            usersList.appendChild(li);
+                        }
+                    });
+                });
+        }
+
+        function registerUser() {
+            var username = document.getElementById('username').value;
+            fetch('/api/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({username: username})
+            })
+                .then(response => response.json())
+                .then(user => {
+                    currentUser = user;
+                    document.getElementById('currentUser').innerText = 'Logged in as: ' + user.username;
+                    connect();
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        function loginUser() {
+            var username = document.getElementById('username').value;
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({username: username})
+            })
+                .then(response => response.json())
+                .then(user => {
+                    currentUser = user;
+                    document.getElementById('currentUser').innerText = 'Logged in as: ' + user.username;
+                    connect();
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        window.onload = function() {
+            document.getElementById('registerBtn').onclick = registerUser;
+            document.getElementById('loginBtn').onclick = loginUser;
+            document.getElementById('sendBtn').onclick = sendMessage;
+            document.getElementById('sendPublicBtn').onclick = sendPublicMessage;
+        };
     </script>
+    <style>
+        #container {
+            display: flex;
+        }
+        #usersList {
+            width: 20%;
+            border-right: 1px solid #ccc;
+            padding: 10px;
+        }
+        #chat {
+            width: 80%;
+            padding: 10px;
+        }
+        #users {
+            list-style: none;
+            padding: 0;
+        }
+        #users li {
+            cursor: pointer;
+            padding: 5px;
+        }
+        #users li:hover {
+            background-color: #f0f0f0;
+        }
+    </style>
 </head>
 <body>
 <div>
-    <input type="text" id="sender" placeholder="Your name" />
-    <input type="text" id="message" placeholder="Type a message..." />
-    <button onclick="sendMessage()">Send</button>
+    <input type="text" id="username" placeholder="Enter your name" />
+    <button id="registerBtn">Register</button>
+    <button id="loginBtn">Login</button>
+    <p id="currentUser"></p>
 </div>
-<div id="response"></div>
+<div id="container">
+    <div id="usersList">
+        <h3>Users</h3>
+        <ul id="users"></ul>
+    </div>
+    <div id="chat">
+        <h3 id="chatWith">Public Chat</h3>
+        <div>
+            <input type="text" id="message" placeholder="Type a message..." />
+            <button id="sendBtn"></button>
+            <button id="sendPublicBtn">Send </button>
+        </div>
+        <div id="response"></div>
+    </div>
+</div>
 </body>
 </html>
